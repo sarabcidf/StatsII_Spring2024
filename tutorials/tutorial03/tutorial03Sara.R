@@ -6,6 +6,7 @@
 
 # remove objects
 rm(list=ls())
+
 # detach all libraries
 detachAllPackages <- function() {
   basic.packages <- c("package:stats", "package:graphics", "package:grDevices", "package:utils", "package:datasets", "package:methods", "package:base")
