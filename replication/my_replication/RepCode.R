@@ -1,0 +1,707 @@
+#### Libraries and options ####
+
+# Removing objects
+rm(list=ls())
+
+# Setting wd for current folder
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+# Detaching all libraries
+detachAllPackages <- function() {
+  basic.packages <- c("package:stats", "package:graphics", "package:grDevices", "package:utils", "package:datasets", "package:methods", "package:base")
+  package.list <- search()[ifelse(unlist(gregexpr("package:", search()))==1, TRUE, FALSE)]
+  package.list <- setdiff(package.list, basic.packages)
+  if (length(package.list)>0)  for (package in package.list) detach(package,  character.only=TRUE)
+}
+detachAllPackages()
+
+# Loading libraries
+pkgTest <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[,  "Package"])]
+  if (length(new.pkg)) 
+    install.packages(new.pkg,  dependencies = TRUE)
+  sapply(pkg,  require,  character.only = TRUE)
+}
+
+lapply(c("data.table", "hdm", "lfe", "stargazer", "xtable", "psych", "stargazer",
+         "tidyverse", "RColorBrewer"), pkgTest)
+
+#### To replicate + twist notes ####
+
+# Paper: https://www.cambridge.org/core/services/aop-cambridge-core/content/view/78DA98DAA6E6B00A302E9DE3EE676E85/S0003055423000369a.pdf/fathers-leave-reduces-sexist-attitudes.pdf
+
+# Replicate: 
+
+# Table 1
+# Figure 1
+# Figure 2
+# Figure 3
+
+# For twist, I will need to replicate table SM3.5, and then compare that to 
+# different models with interactions. 
+
+#### Lasso 1 ####
+
+## Lasso function: 
+
+lassoCov <- function(y, data = np, cov = c("age", "female", "lang_russ", "edu_uni", "edu_voc", "leftright", "married", "city", "children", "postBirth"), main = "postReform"){
+  # prepare the formula to use for generating the model matrix
+  form <- as.formula(paste0(y, "~ -1 + (", paste0(cov, collapse = " + "), ")^2",
+                            "+ I(age^2)"["age" %in% cov], "+ I(leftright)^2"["leftright" %in% cov], "+ I(children_num)^2"["children_num" %in% cov]))
+  
+  # get the complete cases data
+  datComplete <- na.omit(data, c(y, cov, main))
+  # get the expanded covariate matrix
+  datUse <- datComplete[ , model.matrix(form, .SD)]
+  # drop any constant columns
+  datUse <- datUse[ , matrixStats::colSds(datUse) != 0]
+  # fit the lasso for treatment
+  reg_z <- rlasso(x = datUse, y = as.integer(datComplete[[main]]), post = F)$index
+  # fit the lasso for outcome
+  reg_y <- rlasso(x = datUse, y = datComplete[[y]], post = F)$index
+  # keep only coefficients appearing in either
+  keep_cov <- paste(names(reg_y)[reg_z | reg_y], collapse = " + ")
+  # fit a regression using the chosen covariates
+  datFit <- cbind("y" = datComplete[[y]], main = datComplete[[main]], as.data.frame(datUse[ , reg_z | reg_y]))
+  colnames(datFit)[2] <- main
+  reg <- lm(y ~ ., data = datFit)
+  # return results
+  invisible(reg)
+}
+
+#### Study 1 ####
+
+## Data: 
+
+load("/Users/sarabcidf/Desktop/ASDS/Stats II/FathersLeaveRep/Original Files/np.RData")
+np <- setDT(np)
+summary(np)
+
+## Manipulation checks
+
+# Create trim versions
+set(np, NULL, "plEntitle_trim", fifelse(np$plEntitle > 100, 100, np$plEntitle))
+set(np, NULL, "plTakeAvg_trim", fifelse(np$plTakeAvg > 100, 100, np$plTakeAvg))
+np[ , plTakeSelf_trim := fifelse(female == 0 & plTakeSelf > 100, 100, plTakeSelf)]
+
+###
+### Table 1 and Table SM3.1
+###
+
+t.test(plEntitle_trim ~ postReform, data=np)
+sum(!is.na(np$plEntitle_trim))
+t.test(plTakeAvg_trim ~ postReform, data=np)
+sum(!is.na(np$plTakeAvg_trim))
+t.test(plTakeSelf_trim ~ postReform, data=subset(np, female==0))
+sum(!is.na(subset(np, female==0)$plTakeSelf_trim))
+t.test(plTakeSelf_trim ~ postReform, data=subset(np, female==1))
+sum(!is.na(subset(np, female==1)$plTakeSelf_trim))
+
+## SC: Re-arranging and Reporting Table 1
+
+# Named t-tests
+entitlement_ttest <- t.test(plEntitle_trim ~ postReform, data=np)
+takeAvg_ttest <- t.test(plTakeAvg_trim ~ postReform, data=np)
+takeSelfMale_ttest <- t.test(plTakeSelf_trim ~ postReform, data=subset(np, female==0))
+takeSelfFemale_ttest <- t.test(plTakeSelf_trim ~ postReform, data=subset(np, female==1))
+
+# Counting non-missing obs
+n_entitlement <- sum(!is.na(np$plEntitle_trim))
+n_takeAvg <- sum(!is.na(np$plTakeAvg_trim))
+n_takeSelfMale <- sum(!is.na(subset(np, female==0)$plTakeSelf_trim))
+n_takeSelfFemale <- sum(!is.na(subset(np, female==1)$plTakeSelf_trim))
+
+# Assembling table
+table_data <- data.frame(
+  Measure = c("Entitlement", "Average Use", "Uptake (fathers)", "Uptake (mothers)"),
+  PreReform = sprintf("%.2f", c(entitlement_ttest$estimate[1], takeAvg_ttest$estimate[1], takeSelfMale_ttest$estimate[1], takeSelfFemale_ttest$estimate[1])),
+  PostReform = sprintf("%.2f", c(entitlement_ttest$estimate[2], takeAvg_ttest$estimate[2], takeSelfMale_ttest$estimate[2], takeSelfFemale_ttest$estimate[2])),
+  Difference = c(
+    sprintf("%.2f (p < 0.01)", entitlement_ttest$estimate[2] - entitlement_ttest$estimate[1]), 
+    sprintf("%.2f (p < 0.01)", takeAvg_ttest$estimate[2] - takeAvg_ttest$estimate[1]), 
+    sprintf("%.2f (p < 0.01)", takeSelfMale_ttest$estimate[2] - takeSelfMale_ttest$estimate[1]), 
+    sprintf("%.2f (p = %.2f)", takeSelfFemale_ttest$estimate[2] - takeSelfFemale_ttest$estimate[1], takeSelfFemale_ttest$p.value)
+  ),
+  N = c(n_entitlement, n_takeAvg, n_takeSelfMale, n_takeSelfFemale)
+)
+
+# Seeing with stargazer
+stargazer(table_data, summary = FALSE, title = "Table 1. Manipulation Checks",
+          type = "text",
+          header = FALSE, 
+          align = TRUE,
+          column.labels = c("Pre-reform (control)", "Post-reform (treatment)", "Difference", "N"),
+          rownames = FALSE)
+
+# Reporting with stargazer
+stargazer(table_data, summary = FALSE, title = "Table 1. Manipulation Checks",
+          type = "latex",
+          header = FALSE, 
+          align = TRUE,
+          column.labels = c("Pre-reform (control)", "Post-reform (treatment)", "Difference", "N"),
+          rownames = FALSE)
+
+###
+### Figure 1 and Table SM3.5
+###
+
+np49 <- np[birthMonth %in% 4:9]
+
+mod1 <- lm(SocEconScale ~ postReform, data=np49)
+mod2 <- lm(SocEconScale ~ postReform + age + ageSq + female + lang_russ + edu_uni + edu_voc + leftright + married + city + children +postBirth, data=np49)
+mod3 <- lassoCov(y="SocEconScale", data=np49)
+mod4 <- lm(PolScale ~ postReform, data=np49)
+mod5 <- lm(PolScale ~ postReform + age + ageSq + female + lang_russ + edu_uni + edu_voc + leftright + married + city + children +postBirth, data=np49)
+mod6 <- lassoCov(y="PolScale", data=np49)
+mod7 <- lm(PosActScale ~ postReform, data=np49)
+mod8 <- lm(PosActScale ~ postReform + age + ageSq + female + lang_russ + edu_uni + edu_voc + leftright + married + city + children +postBirth, data=np49)
+mod9 <- lassoCov(y="PosActScale", data=np49)
+
+stargazer(mod1, mod2, mod3, mod4, mod5, mod6, mod7, mod8, mod9,
+          digits=2, dep.var.labels.include = T, no.space=T,
+          omit.stat = c("f", "rsq", "ser"),
+          type = "text")
+
+results <- list(mod2, mod3, mod5, mod6, mod8, mod9)
+fx <- sapply(results, function(x){unlist(summary(x)$coefficients["postReform", 1])})
+l90 <- sapply(results, function(x){unlist(confint(x, level=0.9)["postReform", 1])})
+u90 <- sapply(results, function(x){unlist(confint(x, level=0.9)["postReform", 2])})
+l95 <- sapply(results, function(x){unlist(confint(x, level=0.95)["postReform", 1])})
+u95 <- sapply(results, function(x){unlist(confint(x, level=0.95)["postReform", 2])})
+ys <- c(7.75,7.25,4.75,4.25,1.75,1.25)
+
+pdf("Fig1.pdf", height=4,width=8.7)
+par(mar=c(5.1,6.5,2.1,2.1))
+plot(fx, ys, xlim=c(-.1,.45), ylab='',ylim=c(0.5,8.5), yaxt='n', type='n', xaxt='n', main="", xlab="")
+abline(v=0)
+for (i in 1:6){
+  if(i %% 2 != 0){
+    segments(l90[i],ys[i], u90[i],ys[i], col='black', lwd=3)
+    segments(l95[i],ys[i], u95[i],ys[i], col='black', lwd=1)
+    points(fx[i], ys[i], pch=16, col='black', cex=2)
+  }
+  else {
+    segments(l90[i],ys[i], u90[i],ys[i], col='black', lwd=3, lty='dashed')
+    segments(l95[i],ys[i], u95[i],ys[i], col='black', lwd=1, lty='dashed')
+    points(fx[i], ys[i], pch=17, col='black', cex=2)
+  }
+}
+axis(1, xlab="Effect of fathers' leave reform", cex.axis=1.5)
+axis(2,at=c(1.5,4.5,7.5), labels=c('Positive\nAction\nPolicies','Political\nEquality', 'Socio-\nEconomic\nEquality'), las=2, cex.axis=1.5)
+legend(x="bottomright", ncol=1, bty='n', legend=c('All cov.', 'LASSO'), lty=c('solid','dashed'), lwd = 2, pch=c(16,17), cex=1.5)
+title(xlab="Effect of fathers' leave reform", cex.lab=1.5)
+dev.off()
+
+###
+### Figure 2 and Tables DA2.1 and DA2.2
+###
+np49w <- subset(np49, female==1)
+np49m <- subset(np49, female==0)
+
+mod2w <- lm(SocEconScale ~ postReform + age + ageSq + female + lang_russ + edu_uni + edu_voc + leftright + married + city + children +postBirth, data=np49w)
+mod3w <- lassoCov(y="SocEconScale", data=np49w)
+mod5w <- lm(PolScale ~ postReform + age + ageSq + female + lang_russ + edu_uni + edu_voc + leftright + married + city + children +postBirth, data=np49w)
+mod6w <- lassoCov(y="PolScale", data=np49w)
+mod8w <- lm(PosActScale ~ postReform + age + ageSq + female + lang_russ + edu_uni + edu_voc + leftright + married + city + children +postBirth, data=np49w)
+mod9w <- lassoCov(y="PosActScale", data=np49w)
+mod2m <- lm(SocEconScale ~ postReform + age + ageSq + female + lang_russ + edu_uni + edu_voc + leftright + married + city + children +postBirth, data=np49m)
+mod3m <- lassoCov(y="SocEconScale", data=np49m)
+mod5m <- lm(PolScale ~ postReform + age + ageSq + female + lang_russ + edu_uni + edu_voc + leftright + married + city + children +postBirth, data=np49m)
+mod6m <- lassoCov(y="PolScale", data=np49m)
+mod8m <- lm(PosActScale ~ postReform + age + ageSq + female + lang_russ + edu_uni + edu_voc + leftright + married + city + children +postBirth, data=np49m)
+mod9m <- lassoCov(y="PosActScale", data=np49m)
+
+results <- list(mod2w, mod3w, mod5w, mod6w, mod8w, mod9w,
+                mod2m, mod3m, mod5m, mod6m, mod8m, mod9m)
+fx <- sapply(results, function(x){unlist(summary(x)$coefficients["postReform", 1])})
+l90 <- sapply(results, function(x){unlist(confint(x, level=0.9)["postReform", 1])})
+u90 <- sapply(results, function(x){unlist(confint(x, level=0.9)["postReform", 2])})
+l95 <- sapply(results, function(x){unlist(confint(x, level=0.95)["postReform", 1])})
+u95 <- sapply(results, function(x){unlist(confint(x, level=0.95)["postReform", 2])})
+ys <- c(8.75,8.25,5.75,5.25,2.75,2.25,7.75,7.25,4.75,4.25,1.75,1.25)
+
+color1 <- rgb(225,190,106,maxColorValue=255) # yellow
+color2 <- rgb(64,176,166,maxColorValue=255) # green
+pdf("Fig2.pdf", height=8,width=8.7)
+par(mar=c(6,6.5,2.1,2.1))
+plot(fx, ys, xlim=c(-.3,.6), ylab='',ylim=c(1,9), yaxt='n', type='n', xaxt='n', main="", xlab="")
+abline(v=0)
+for (i in 1:12){
+  if((i==1|i==3|i==5)){
+    segments(l90[i],ys[i], u90[i],ys[i], col=color1, lwd=3)
+    segments(l95[i],ys[i], u95[i],ys[i], col=color1)
+    points(fx[i], ys[i], pch=16, col=color1, cex=2)
+  }
+  if((i==2|i==4|i==6)){
+    segments(l90[i],ys[i], u90[i],ys[i], col=color1, lwd=3, lty='dashed')
+    segments(l95[i],ys[i], u95[i],ys[i], col=color1, lty='dashed')
+    points(fx[i], ys[i], pch=17, col=color1, cex=2)
+  }
+  if((i==7|i==9|i==11)){
+    segments(l90[i],ys[i], u90[i],ys[i], col=color2, lwd=3)
+    segments(l95[i],ys[i], u95[i],ys[i], col=color2)
+    points(fx[i], ys[i], pch=16, col=color2, cex=2)
+  }
+  if((i==8|i==10|i==12)){
+    segments(l90[i],ys[i], u90[i],ys[i], col=color2, lwd=3, lty='dashed')
+    segments(l95[i],ys[i], u95[i],ys[i], col=color2, lty='dashed')
+    points(fx[i], ys[i], pch=17, col=color2, cex=2)
+  }
+}
+axis(1, xlab="Effect of fathers' leave reform", cex.axis=1.5)
+axis(2,at=c(2,5,8), labels=c('Positive\nAction\nPolicies','Political\nEquality', 'Socio-\nEconomic\nEquality'), las=2, cex.axis=1.5)
+legend(x="bottomleft", inset = c(0, -0.2), bty='n', 
+       legend=c('W: All', 'W: LASSO', 'M: All', 'M: LASSO'), lty=c('solid', 'dashed', 'solid', 'dashed'), lwd=2, 
+       pch=c(16,17,16,17), col=c(color1, color1, color2, color2), 
+       text.width=c(0.1,0.175,0.1,0.15), x.intersp=0.5, cex=1.5, horiz=TRUE, xpd=T)
+title(xlab="Effect of fathers' leave reform", cex.lab=1.5)
+dev.off()
+
+stargazer(mod2w, mod3w, mod5w, mod6w, mod8w, mod9w,
+          digits=2, dep.var.labels.include = T, no.space=T,
+          omit.stat = c("f", "rsq", "ser"))
+
+stargazer(mod2m, mod3m, mod5m, mod6m, mod8m, mod9m,
+          digits=2, dep.var.labels.include = T, no.space=T,
+          omit.stat = c("f", "rsq", "ser"))
+
+#### Lasso 2 ####
+
+## Lasso function 2
+lassoCov <- function(y, data = es, cov = c("age", "female", "lang_russ", "edu_uni", "leftright", "married", "city", "children_num"), main = "treat"){
+  # prepare the formula to use for generating the model matrix
+  form <- as.formula(paste0(y, "~ -1 + (", paste0(cov, collapse = " + "), ")^2",
+                            "+ I(age^2)"["age" %in% cov], "+ I(leftright)^2"["leftright" %in% cov], "+ I(children_num)^2"["children_num" %in% cov]))
+  
+  # get the complete cases data
+  datComplete <- na.omit(data, c(y, cov, main))
+  # get the expanded covariate matrix
+  datUse <- datComplete[ , model.matrix(form, .SD)]
+  # drop any constant columns
+  datUse <- datUse[ , matrixStats::colSds(datUse) != 0]
+  # fit the lasso for treatment
+  reg_z <- rlasso(x = datUse, y = as.integer(datComplete[[main]]), post = F)$index
+  # fit the lasso for outcome
+  reg_y <- rlasso(x = datUse, y = datComplete[[y]], post = F)$index
+  # keep only coefficients appearing in either
+  keep_cov <- paste(names(reg_y)[reg_z | reg_y], collapse = " + ")
+  # fit a regression using the chosen covariates
+  datFit <- cbind("y" = datComplete[[y]], main = datComplete[[main]], as.data.frame(datUse[ , reg_z | reg_y]))
+  colnames(datFit)[2] <- main
+  reg <- lm(y ~ ., data = datFit)
+  # return results
+  invisible(reg)
+}
+
+#### Study 2 ####
+
+## Data: 
+
+load("/Users/sarabcidf/Desktop/ASDS/Stats II/FathersLeaveRep/Original Files/es.RData")
+summary(es)
+
+###
+### Figure 3 and Table SM4.4
+###
+
+mod1 <- lm(SocEconScale ~ treat, data=es)
+mod2 <- lm(SocEconScale ~ treat + age + ageSq + female + lang_russ + edu_uni + leftright + married + city + children_num, data=es)
+mod3 <- lassoCov(y="SocEconScale", data=es)
+mod4 <- lm(PolScale ~ treat, data=es)
+mod5 <- lm(PolScale ~ treat + age + ageSq + female + lang_russ + edu_uni + leftright + married + city + children_num, data=es)
+mod6 <- lassoCov(y="PolScale", data=es)
+mod7 <- lm(PosActScale ~ treat, data=es)
+mod8 <- lm(PosActScale ~ treat + age + ageSq + female + lang_russ + edu_uni + leftright + married + city + children_num, data=es)
+mod9 <- lassoCov(y="PosActScale", data=es)
+stargazer(mod1, mod2, mod3, mod4, mod5, mod6, mod7, mod8, mod9,
+          digits=2, dep.var.labels.include = T, no.space=T,
+          omit.stat = c("f", "rsq", "ser"))
+
+results <- list(mod2, mod3, mod5, mod6, mod8, mod9)
+fx <- sapply(results, function(x){unlist(summary(x)$coefficients["treat", 1])})
+l90 <- sapply(results, function(x){unlist(confint(x, level=0.9)["treat", 1])})
+u90 <- sapply(results, function(x){unlist(confint(x, level=0.9)["treat", 2])})
+l95 <- sapply(results, function(x){unlist(confint(x, level=0.95)["treat", 1])})
+u95 <- sapply(results, function(x){unlist(confint(x, level=0.95)["treat", 2])})
+ys <- c(7.75,7.25,4.75,4.25,1.75,1.25)
+pdf("Fig3.pdf", height=4,width=8.7)
+par(mar=c(5.1,6.5,2.1,2.1))
+plot(fx, ys, xlim=c(-.2,.25), ylab='',ylim=c(0.5,8.5), yaxt='n', type='n', xaxt='n', main="", xlab="")
+abline(v=0)
+for (i in 1:6){
+  if(i %% 2 != 0){
+    segments(l90[i],ys[i], u90[i],ys[i], col='black', lwd=3)
+    segments(l95[i],ys[i], u95[i],ys[i], col='black', lwd=1)
+    points(fx[i], ys[i], pch=16, col='black', cex=2)
+  }
+  else {
+    segments(l90[i],ys[i], u90[i],ys[i], col='black', lwd=3, lty='dashed')
+    segments(l95[i],ys[i], u95[i],ys[i], col='black', lwd=1, lty='dashed')
+    points(fx[i], ys[i], pch=17, col='black', cex=2)
+  }
+}
+axis(1, xlab='Effect of post-reform birth', cex.axis=1.5)
+axis(2,at=c(1.5,4.5,7.5), labels=c('Positive\nAction\nPolicies','Political\nEquality', 'Socio-\nEconomic\nEquality'), las=2, cex.axis=1.5)
+legend(x="topright", ncol=1, bty='n', legend=c('All cov.', 'LASSO'), lty=c('solid','dashed'), lwd = 2, pch=c(16,17), cex=1.5)
+title(xlab='Treatment effect', cex.lab=1.5)
+dev.off()
+
+#### Twist ####
+
+## Wrangling age and number of children to add interaction:
+summary(np49$age)
+summary(np49$children)
+
+np49 <- np49 %>%
+  mutate(
+    age_cat = cut(age,
+                  breaks = c(17, 27, 31, 35, 50),
+                  labels = c("Young adults", "Adults", "Mature adults", "Older adults"),
+                  right = TRUE),
+    children_cat = cut(children,
+                       breaks = c(-1, 0, 1, 2, Inf),
+                       labels = c("No children", "One child", "Two children", "Three or more children"),
+                       right = TRUE),
+    postReform = as.factor(postReform)
+  )
+
+## New models
+# SocEcon
+mod_interaction_gender_soc <- lm(SocEconScale ~ postReform * female, data=np49)
+mod_interaction_edu_soc <- lm(SocEconScale ~ postReform * edu_uni, data=np49)
+mod_interaction_age_soc <- lm(SocEconScale ~ postReform * age_cat, data=np49)
+mod_interaction_city_soc <- lm(SocEconScale ~ postReform * city, data=np49)
+mod_interaction_children_soc <- lm(SocEconScale ~ postReform * children_cat, data=np49)
+mod_interaction_married_soc <- lm(SocEconScale ~ postReform * married, data=np49)
+mod_interaction_lang_russ_soc <- lm(SocEconScale ~ postReform * lang_russ, data=np49)
+
+# Pol
+mod_interaction_gender_pol <- lm(PolScale ~ postReform * female, data=np49)
+mod_interaction_edu_pol <- lm(PolScale ~ postReform * edu_uni, data=np49)
+mod_interaction_age_pol <- lm(PolScale ~ postReform * age_cat, data=np49)
+mod_interaction_city_pol <- lm(PolScale ~ postReform * city, data=np49)
+mod_interaction_children_pol <- lm(PolScale ~ postReform * children_cat, data=np49)
+mod_interaction_married_pol <- lm(PolScale ~ postReform * married, data=np49)
+mod_interaction_lang_russ_pol <- lm(PolScale ~ postReform * lang_russ, data=np49)
+
+# PosAct
+mod_interaction_gender_pos <- lm(PosActScale ~ postReform * female, data=np49)
+mod_interaction_edu_pos <- lm(PosActScale ~ postReform * edu_uni, data=np49)
+mod_interaction_age_pos <- lm(PosActScale ~ postReform * age_cat, data=np49)
+mod_interaction_city_pos <- lm(PosActScale ~ postReform * city, data=np49)
+mod_interaction_children_pos <- lm(PosActScale ~ postReform * children_cat, data=np49)
+mod_interaction_married_pos <- lm(PosActScale ~ postReform * married, data=np49)
+mod_interaction_lang_russ_pos <- lm(PosActScale ~ postReform * lang_russ, data=np49)
+
+## Summaries
+# SocEcon models
+summary(mod_interaction_gender_soc)
+summary(mod_interaction_edu_soc)
+summary(mod_interaction_age_soc)
+summary(mod_interaction_city_soc)
+summary(mod_interaction_children_soc)
+summary(mod_interaction_married_soc)
+summary(mod_interaction_lang_russ_soc)
+
+# Pol models
+summary(mod_interaction_gender_pol)
+summary(mod_interaction_edu_pol)
+summary(mod_interaction_age_pol)
+summary(mod_interaction_city_pol)
+summary(mod_interaction_children_pol)
+summary(mod_interaction_married_pol)
+summary(mod_interaction_lang_russ_pol)
+
+
+# PosAct models
+summary(mod_interaction_gender_pos)
+summary(mod_interaction_edu_pos)
+summary(mod_interaction_age_pos)
+summary(mod_interaction_city_pos)
+summary(mod_interaction_children_pos)
+summary(mod_interaction_married_pos)
+summary(mod_interaction_lang_russ_pos)
+
+## Predictions for visualization 
+# SocEcon
+np49$pred_gender_interaction_soc <- predict(mod_interaction_gender_soc, newdata=np49)
+np49$pred_edu_interaction_soc <- predict(mod_interaction_edu_soc, newdata=np49)
+np49$pred_age_interaction_soc <- predict(mod_interaction_age_soc, newdata=np49)
+np49$pred_city_interaction_soc <- predict(mod_interaction_city_soc, newdata=np49)
+np49$pred_children_interaction_soc <- predict(mod_interaction_children_soc, newdata=np49)
+np49$pred_married_interaction_soc <- predict(mod_interaction_married_soc, newdata=np49)
+np49$pred_lang_russ_interaction_soc <- predict(mod_interaction_lang_russ_soc, newdata=np49)
+
+# Pol
+np49$pred_gender_interaction_pol <- predict(mod_interaction_gender_pol, newdata=np49)
+np49$pred_edu_interaction_pol <- predict(mod_interaction_edu_pol, newdata=np49)
+np49$pred_age_interaction_pol <- predict(mod_interaction_age_pol, newdata=np49)
+np49$pred_city_interaction_pol <- predict(mod_interaction_city_pol, newdata=np49)
+np49$pred_children_interaction_pol <- predict(mod_interaction_children_pol, newdata=np49)
+np49$pred_married_interaction_pol <- predict(mod_interaction_married_pol, newdata=np49)
+np49$pred_lang_russ_interaction_pol <- predict(mod_interaction_lang_russ_pol, newdata=np49)
+
+# PosAct
+np49$pred_gender_interaction_pos <- predict(mod_interaction_gender_pos, newdata=np49)
+np49$pred_edu_interaction_pos <- predict(mod_interaction_edu_pos, newdata=np49)
+np49$pred_age_interaction_pos <- predict(mod_interaction_age_pos, newdata=np49)
+np49$pred_city_interaction_pos <- predict(mod_interaction_city_pos, newdata=np49)
+np49$pred_children_interaction_pos <- predict(mod_interaction_children_pos, newdata=np49)
+np49$pred_married_interaction_pos <- predict(mod_interaction_married_pos, newdata=np49)
+np49$pred_lang_russ_interaction_pos <- predict(mod_interaction_lang_russ_pos, newdata=np49)
+
+## Reporting
+# Lists
+gender_models <- list(mod_interaction_gender_soc, mod_interaction_gender_pol, mod_interaction_gender_pos)
+edu_models <- list(mod_interaction_edu_soc, mod_interaction_edu_pol, mod_interaction_edu_pos)
+age_models <- list(mod_interaction_age_soc, mod_interaction_age_pol, mod_interaction_age_pos)
+city_models <- list(mod_interaction_city_soc, mod_interaction_city_pol, mod_interaction_city_pos)
+children_models <- list(mod_interaction_children_soc, mod_interaction_children_pol, mod_interaction_children_pos)
+married_models <- list(mod_interaction_married_soc, mod_interaction_married_pol, mod_interaction_married_pos)
+lang_russ_models <- list(mod_interaction_lang_russ_soc, mod_interaction_lang_russ_pol, mod_interaction_lang_russ_pos)
+
+# Tables with stargazer
+stargazer(gender_models, title = "Gender Models", type = "latex", out = "gender_models.tex")
+stargazer(edu_models, title = "Education Models", type = "latex", out = "edu_models.tex")
+stargazer(age_models, title = "Age Models", type = "latex", out = "age_models.tex")
+stargazer(city_models, title = "City Models", type = "latex", out = "city_models.tex")
+stargazer(children_models, title = "Children Models", type = "latex", out = "children_models.tex")
+stargazer(married_models, title = "Married Models", type = "latex", out = "married_models.tex")
+stargazer(lang_russ_models, title = "Language Models", type = "latex", out = "lang_russ_models.tex")
+
+#### Prediction + Regression Plots (Twist) ####
+
+# Setting theme for plots 
+
+theme_plots <- theme_minimal() +
+  theme(
+    text = element_text(size = 25),  
+    aspect.ratio = 0.85             
+  )
+
+## Gender
+plot_data <- np49 %>%
+  select(postReform, female,
+         pred_gender_interaction_soc,
+         pred_gender_interaction_pol,
+         pred_gender_interaction_pos) %>%
+  pivot_longer(cols = starts_with("pred_gender_interaction"),
+               names_to = "Scale",
+               values_to = "PredictedValue") %>%
+  mutate(Scale = factor(recode(Scale,
+                               pred_gender_interaction_soc = "Socio-Economic",
+                               pred_gender_interaction_pol = "Political",
+                               pred_gender_interaction_pos = "Positive Action"),
+                        levels = c("Socio-Economic", "Political", "Positive Action")),
+         postReform = factor(postReform, levels = c(0, 1)),
+         female = factor(female, levels = c(0, 1), labels = c("Male", "Female")))
+
+gg_gender <- ggplot(plot_data, aes(x = postReform, y = PredictedValue, color = female, group = interaction(female, Scale))) +
+  geom_point(aes(shape = female), size = 5, position = position_dodge(width = 0.1)) +
+  geom_line(aes(linetype = female), position = position_dodge(width = 0.1), alpha = 0.5, size = 2, linetype = "dotted") + 
+  facet_wrap(~Scale, scales = "free_y") +
+  scale_color_manual(values = c("Male" = "midnightblue", "Female" = "lightpink3")) +
+  labs(x = "Post Reform", y = "Predicted Value", color = "Gender", shape = "Gender", linetype = "Gender") +
+  theme_plots +
+  theme(legend.position = "bottom")  # Place legend at the bottom
+
+ggsave(filename = "gender_plot.png", plot = gg_gender, width = 12, height = 8, units = "in", dpi = 300)
+
+## University 
+plot_data_edu <- np49 %>%
+  select(postReform, edu_uni,
+         pred_edu_interaction_soc,
+         pred_edu_interaction_pol,
+         pred_edu_interaction_pos) %>%
+  pivot_longer(cols = starts_with("pred_edu_interaction"),
+               names_to = "Scale",
+               values_to = "PredictedValue") %>%
+  mutate(Scale = recode(Scale,
+                        pred_edu_interaction_soc = "Socio-Economic",
+                        pred_edu_interaction_pol = "Political",
+                        pred_edu_interaction_pos = "Positive Action"),
+         Scale = factor(Scale, levels = c("Socio-Economic", "Political", "Positive Action")),
+         postReform = factor(postReform, levels = c(0, 1)),
+         edu_uni = factor(edu_uni, levels = c(0, 1), labels = c("No University", "University")))
+
+gg_univ <- ggplot(plot_data_edu, aes(x = postReform, y = PredictedValue, color = edu_uni, group = interaction(edu_uni, Scale))) +
+  geom_point(aes(shape = edu_uni), size = 5, position = position_dodge(width = 0.1)) +
+  geom_line(aes(linetype = edu_uni), position = position_dodge(width = 0.1), alpha = 0.5, size = 2, linetype = "dotted") + 
+  facet_wrap(~Scale, scales = "free_y") +
+  scale_color_manual(values = c("No University" = "indianred3", "University" = "seagreen")) +
+  labs(x = "Post-Reform (0=Before, 1=After)", 
+       y = "Predicted Value", 
+       color = "University Education", 
+       shape = "University Education", 
+       linetype = "University Education") +
+  theme_plots +
+  theme(legend.position = "bottom")  # Place legend at the bottom
+
+ggsave(filename = "univ_plot.png", plot = gg_univ, width = 12, height = 8, units = "in", dpi = 300)
+
+## Age 
+plot_data_age <- np49 %>%
+  select(postReform, age_cat,
+         pred_age_interaction_soc,
+         pred_age_interaction_pol,
+         pred_age_interaction_pos) %>%
+  pivot_longer(cols = starts_with("pred_age_interaction"),
+               names_to = "Scale",
+               values_to = "PredictedValue") %>%
+  mutate(Scale = recode(Scale,
+                        pred_age_interaction_soc = "Socio-Economic",
+                        pred_age_interaction_pol = "Political",
+                        pred_age_interaction_pos = "Positive Action"),
+         Scale = factor(Scale, levels = c("Socio-Economic", "Political", "Positive Action")),
+         postReform = factor(postReform, levels = c(0, 1)),
+         age_cat = factor(age_cat, levels = c("Young adults", "Adults", "Mature adults", "Older adults")))
+
+gg_age <- ggplot(plot_data_age, aes(x = postReform, y = PredictedValue, color = age_cat, group = interaction(age_cat, Scale))) +
+  geom_point(aes(shape = age_cat), size = 5, position = position_dodge(width = 0.1)) +
+  geom_line(aes(linetype = age_cat), position = position_dodge(width = 0.1), alpha = 0.5,  size = 2, linetype = "dotted") + 
+  facet_wrap(~Scale, scales = "free_y") +
+  scale_color_manual(values = c("Young adults" = "navyblue", "Adults" = "dodgerblue4", "Mature adults" = "dodgerblue", "Older adults" = "lightskyblue")) +
+  labs(x = "Post-Reform (0=Before, 1=After)", 
+       y = "Predicted Value", 
+       color = "Age Group", 
+       shape = "Age Group", 
+       linetype = "Age Group") +
+  theme_plots +
+  theme(legend.position = "bottom")  # Place legend at the bottom
+
+ggsave(filename = "age_plot.png", plot = gg_age, width = 12, height = 8, units = "in", dpi = 300)
+
+## City 
+plot_data_city <- np49 %>%
+  select(postReform, city,
+         pred_city_interaction_soc,
+         pred_city_interaction_pol,
+         pred_city_interaction_pos) %>%
+  pivot_longer(cols = starts_with("pred_city_interaction"),
+               names_to = "Scale",
+               values_to = "PredictedValue") %>%
+  mutate(Scale = recode(Scale,
+                        pred_city_interaction_soc = "Socio-Economic",
+                        pred_city_interaction_pol = "Political",
+                        pred_city_interaction_pos = "Positive Action"),
+         Scale = factor(Scale, levels = c("Socio-Economic", "Political", "Positive Action")),
+         postReform = factor(postReform, levels = c(0, 1)),
+         city = factor(city, levels = c(0, 1), labels = c("Rural", "Urban")))
+
+gg_city <- ggplot(plot_data_city, aes(x = postReform, y = PredictedValue, color = city, group = interaction(city, Scale))) +
+  geom_point(aes(shape = city), size = 5, position = position_dodge(width = 0.1)) +
+  geom_line(aes(linetype = city), position = position_dodge(width = 0.1), alpha = 0.5,  size = 2, linetype = "dotted") + 
+  facet_wrap(~Scale, scales = "free_y") +
+  scale_color_manual(values = c("Rural" = "lightblue4", "Urban" = "darkgreen")) +
+  labs(x = "Post-Reform (0=Before, 1=After)", 
+       y = "Predicted Value", 
+       color = "City", 
+       shape = "City", 
+       linetype = "City") +
+  theme_plots +
+  theme(legend.position = "bottom")  # Place legend at the bottom
+
+ggsave(filename = "city_plot.png", plot = gg_city, width = 12, height = 8, units = "in", dpi = 300)
+
+## Children 
+
+plot_data_children <- np49 %>%
+  filter(!is.na(children_cat)) %>%  # Filter out NA values in children_cat
+  select(postReform, children_cat,
+         pred_children_interaction_soc,
+         pred_children_interaction_pol,
+         pred_children_interaction_pos) %>%
+  pivot_longer(cols = starts_with("pred_children_interaction"),
+               names_to = "Scale",
+               values_to = "PredictedValue") %>%
+  mutate(Scale = recode(Scale,
+                        pred_children_interaction_soc = "Socio-Economic",
+                        pred_children_interaction_pol = "Political",
+                        pred_children_interaction_pos = "Positive Action"),
+         Scale = factor(Scale, levels = c("Socio-Economic", "Political", "Positive Action")),
+         postReform = factor(postReform, levels = c(0, 1)),
+         children_cat = factor(children_cat))
+
+gg_children <- ggplot(plot_data_children, aes(x = postReform, y = PredictedValue, color = children_cat, group = interaction(children_cat, Scale))) +
+  geom_point(aes(shape = children_cat), size = 5, position = position_dodge(width = 0.1)) +
+  geom_line(aes(linetype = children_cat), position = position_dodge(width = 0.1), alpha = 0.5,  size = 2, linetype = "dotted") + 
+  facet_wrap(~Scale, scales = "free_y") +
+  scale_color_manual(values = c("Three or more children" = "dodgerblue4", 
+                                "Two children" = "dodgerblue", 
+                                "One child" = "darkslategray3", 
+                                "No children" = "darkslategray")) +
+  labs(x = "Post-Reform (0=Before, 1=After)", 
+       y = "Predicted Value", 
+       color = "Number of Children", 
+       shape = "Number of Children", 
+       linetype = "Number of Children") +
+  theme_plots +
+  theme(legend.position = "bottom")  # Place legend at the bottom
+
+ggsave(filename = "children_plot.png", plot = gg_children, width = 12, height = 8, units = "in", dpi = 300)
+
+## Married 
+plot_data_married <- np49 %>%
+  select(postReform, married,
+         pred_married_interaction_soc,
+         pred_married_interaction_pol,
+         pred_married_interaction_pos) %>%
+  pivot_longer(cols = starts_with("pred_married_interaction"),
+               names_to = "Scale",
+               values_to = "PredictedValue") %>%
+  mutate(Scale = recode(Scale,
+                        pred_married_interaction_soc = "Socio-Economic",
+                        pred_married_interaction_pol = "Political",
+                        pred_married_interaction_pos = "Positive Action"),
+         Scale = factor(Scale, levels = c("Socio-Economic", "Political", "Positive Action")),
+         postReform = factor(postReform, levels = c(0, 1)),
+         married = factor(married, levels = c(0, 1), labels = c("Not Married", "Married")))
+
+gg_married <- ggplot(plot_data_married, aes(x = postReform, y = PredictedValue, color = married, group = interaction(married, Scale))) +
+  geom_point(aes(shape = married), size = 5, position = position_dodge(width = 0.1)) +
+  geom_line(aes(linetype = married), position = position_dodge(width = 0.1), alpha = 0.5,  size = 2, linetype = "dotted") +
+  facet_wrap(~Scale, scales = "free_y") +
+  scale_color_manual(values = c("Not Married" = "slategray", "Married" = "darkblue"), name = "Marital Status") +
+  labs(x = "Post-Reform (0=Before, 1=After)", 
+       y = "Predicted Value", 
+       color = "Marital Status", 
+       shape = "Marital Status", 
+       linetype = "Marital Status") +
+  theme_plots +
+  theme(legend.position = "bottom")  # Place legend at the bottom
+
+ggsave(filename = "married_plot.png", plot = gg_married, width = 12, height = 8, units = "in", dpi = 300)
+
+## Russian 
+
+plot_data_lang_russ <- np49 %>%
+  select(postReform, lang_russ,
+         pred_lang_russ_interaction_soc,
+         pred_lang_russ_interaction_pol,
+         pred_lang_russ_interaction_pos) %>%
+  pivot_longer(cols = starts_with("pred_lang_russ_interaction"),
+               names_to = "Scale",
+               values_to = "PredictedValue") %>%
+  mutate(Scale = recode(Scale,
+                        pred_lang_russ_interaction_soc = "Socio-Economic",
+                        pred_lang_russ_interaction_pol = "Political",
+                        pred_lang_russ_interaction_pos = "Positive Action"),
+         Scale = factor(Scale, levels = c("Socio-Economic", "Political", "Positive Action")),
+         postReform = factor(postReform, levels = c(0, 1)),
+         lang_russ = factor(lang_russ, levels = c(0, 1), labels = c("Other Languages", "Russian")))
+
+gg_russian <- ggplot(plot_data_lang_russ, aes(x = postReform, y = PredictedValue, color = lang_russ, group = interaction(lang_russ, Scale))) +
+  geom_point(aes(shape = lang_russ), size = 5, position = position_dodge(width = 0.1)) +
+  geom_line(aes(linetype = lang_russ), position = position_dodge(width = 0.1), alpha = 0.5,  size = 2, linetype = "dotted") +
+  facet_wrap(~Scale, scales = "free_y") +
+  scale_color_manual(values = c("Other Languages" = "thistle4", "Russian" = "cadetblue3"), name = "Language Spoken") +
+  labs(x = "Post-Reform (0=Before, 1=After)", 
+       y = "Predicted Value", 
+       color = "Language Spoken", 
+       shape = "Language Spoken", 
+       linetype = "Language Spoken") +
+  theme_plots +
+  theme(legend.position = "bottom")  # Place legend at the bottom
+
+ggsave(filename = "russian_plot.png", plot = gg_russian, width = 12, height = 8, units = "in", dpi = 300)
+         
