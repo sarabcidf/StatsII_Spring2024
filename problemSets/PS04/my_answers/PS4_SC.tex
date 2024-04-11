@@ -1,0 +1,113 @@
+\documentclass[12pt,letterpaper]{article}
+\usepackage{graphicx,textcomp}
+\usepackage{natbib}
+\usepackage{setspace}
+\usepackage{fullpage}
+\usepackage{color}
+\usepackage[reqno]{amsmath}
+\usepackage{amsthm}
+\usepackage{fancyvrb}
+\usepackage{amssymb,enumerate}
+\usepackage[all]{xy}
+\usepackage{endnotes}
+\usepackage{lscape}
+\newtheorem{com}{Comment}
+\usepackage{float}
+\usepackage{hyperref}
+\newtheorem{lem} {Lemma}
+\newtheorem{prop}{Proposition}
+\newtheorem{thm}{Theorem}
+\newtheorem{defn}{Definition}
+\newtheorem{cor}{Corollary}
+\newtheorem{obs}{Observation}
+\usepackage[compact]{titlesec}
+\usepackage{dcolumn}
+\usepackage{tikz}
+\usetikzlibrary{arrows}
+\usepackage{multirow}
+\usepackage{xcolor}
+\newcolumntype{.}{D{.}{.}{-1}}
+\newcolumntype{d}[1]{D{.}{.}{#1}}
+\definecolor{light-gray}{gray}{0.65}
+\usepackage{url}
+\usepackage{listings}
+\usepackage{color}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+	backgroundcolor=\color{backcolour},   
+	commentstyle=\color{codegreen},
+	keywordstyle=\color{magenta},
+	numberstyle=\tiny\color{codegray},
+	stringstyle=\color{codepurple},
+	basicstyle=\footnotesize,
+	breakatwhitespace=false,         
+	breaklines=true,                 
+	captionpos=b,                    
+	keepspaces=true,                 
+	numbers=left,                    
+	numbersep=5pt,                  
+	showspaces=false,                
+	showstringspaces=false,
+	showtabs=false,                  
+	tabsize=2
+}
+\lstset{style=mystyle}
+\newcommand{\Sref}[1]{Section~\ref{#1}}
+\newtheorem{hyp}{Hypothesis}
+
+\title{Problem Set 4}
+\date{Due: April 12, 2024}
+\author{Applied Stats II}
+
+
+\begin{document}
+	\maketitle
+	\section*{Instructions}
+	\begin{itemize}
+	\item Please show your work! You may lose points by simply writing in the answer. If the problem requires you to execute commands in \texttt{R}, please include the code you used to get your answers. Please also include the \texttt{.R} file that contains your code. If you are not sure if work needs to be shown for a particular problem, please ask.
+	\item Your homework should be submitted electronically on GitHub in \texttt{.pdf} form.
+	\item This problem set is due before 23:59 on Friday April 12, 2024. No late assignments will be accepted.
+
+	\end{itemize}
+
+	\vspace{.25cm}
+\section*{Question 1}
+\vspace{.25cm}
+\noindent We're interested in modeling the historical causes of child mortality. We have data from 26855 children born in Skellefteå, Sweden from 1850 to 1884. Using the "child" dataset in the \texttt{eha} library, fit a Cox Proportional Hazard model using mother's age and infant's gender as covariates. Present and interpret the output.
+
+\vspace{0.5cm}
+\noindent First, I imported the data and created the child survival object: 
+
+\lstinputlisting[language=R, linerange={30-32}]{PS4_SC.R}
+\vspace{.25cm}
+
+\noindent Then I fit the Cox PH model:
+
+\lstinputlisting[language=R, linerange={49-53}]{PS4_SC.R}
+\vspace{.25cm}
+
+\noindent This generated the following results: 
+
+\begin{table}[H] \centering   \caption{Cox PH Model Results}   \label{} \begin{tabular}{@{\extracolsep{5pt}}lc} \\[-1.8ex]\hline \hline \\[-1.8ex]  & \multicolumn{1}{c}{\textit{Dependent variable:}} \\ \cline{2-2} \\[-1.8ex] & child\_surv \\ \hline \\[-1.8ex]  sexfemale & $-$0.082$^{***}$ \\   & (0.027) \\   & \\  m.age & 0.008$^{***}$ \\   & (0.002) \\   & \\ \hline \\[-1.8ex] Observations & 26,574 \\ R$^{2}$ & 0.001 \\ Max. Possible R$^{2}$ & 0.986 \\ Log Likelihood & $-$56,503.480 \\ Wald Test & 22.520$^{***}$ (df = 2) \\ LR Test & 22.518$^{***}$ (df = 2) \\ Score (Logrank) Test & 22.530$^{***}$ (df = 2) \\ \hline \hline \\[-1.8ex] \textit{Note:}  & \multicolumn{1}{r}{$^{*}$p$<$0.1; $^{**}$p$<$0.05; $^{***}$p$<$0.01} \\ \end{tabular} \end{table} 
+
+\noindent Based on the above coefficients, going from male babies to female ones is associated with a decrease of 0.082 in the log hazard, on average, while controlling for the age of the mother. This means that male babies have higher mortality rates. As for the age of the mother, one additional year of age is associated with an increase of 0.008 in the log hazard for the babies, on average, while controlling for the gender of the babies. This means that as mothers become older, the babies face worse chances of survival. 
+
+\vspace{0.25cm}
+\noindent Then I exponentiated the coefficients to also interpret in terms of the hazard ratio: 
+
+\lstinputlisting[language=R, linerange={54-57}]{PS4_SC.R}
+\vspace{.25cm}
+
+\noindent This yielded the following: 
+
+\begin{table}[H] \centering   \caption{Exponentiated Coefficients}   \label{} \begin{tabular}{@{\extracolsep{5pt}} cc} \\[-1.8ex]\hline \hline \\[-1.8ex] sexfemale & m.age \\ \hline \\[-1.8ex] $0.921$ & $1.008$ \\ \hline \\[-1.8ex] \end{tabular} \end{table} 
+
+\newpage
+\noindent From the table, we can interpret that the hazard ratio for female babies is 0.921 times that of male babies (so for every 92.1 females who die, 100 male babies do). Again, female babies have slightly better chances of survival. With regard to age, we can interpret that the hazard ratio for children with mothers with one additional year of age is 100.8 times that of children whose mothers are one year younger. Again. babies with younger mothers face better chances of survival. 
+
+\end{document}
